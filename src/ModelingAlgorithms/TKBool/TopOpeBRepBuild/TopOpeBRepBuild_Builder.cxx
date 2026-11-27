@@ -1776,6 +1776,8 @@ void TopOpeBRepBuild_Builder::SplitSolid(const TopoDS_Shape& S1oriented,
     FillSolid(Scur, ToBuild2, LS1, ToBuild1, SFS, RevOri2);
   }
 
+  // Fillets can consume every original face, leaving no seed for a new shell.
+  const bool hasNoStartFaces = SFS.StartElements().IsEmpty();
   // Add the intersection surfaces
   // -----------------------------
   if (myDataStructure->NbSurfaces() > 0)
@@ -1791,7 +1793,14 @@ void TopOpeBRepBuild_Builder::SplitSolid(const TopoDS_Shape& S1oriented,
         TopAbs_Orientation ori   = SSurfaces.Orientation(ToBuild1);
         myBuildTool.Orientation(aFace, ori);
 
-        SFS.AddElement(aFace);
+        if (hasNoStartFaces)
+        {
+          SFS.AddStartElement(aFace);
+        }
+        else
+        {
+          SFS.AddElement(aFace);
+        }
       }
     }
   }

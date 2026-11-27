@@ -11,6 +11,7 @@
 // Alternatively, this file may be used under the terms of Open CASCADE
 // commercial license or contractual agreement.
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRep_Builder.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -913,4 +914,76 @@ TEST(BRepFilletAPI_MakeFilletTest, CollapsedFreeBoundarySectionSharesEndpoint)
     BRepGProp::SurfaceProperties(aFillet.Shape(), aProperties);
     EXPECT_NEAR(aProperties.Mass(), 803799.0, 803799.0 * 1.e-4) << aShift;
   }
+}
+
+TEST(BRepFilletAPI_MakeFilletTest, EntireCylinderConsumedByFillets)
+{
+  for (const double aRadius : {0.3, 30.0, 3000.0})
+  {
+    SCOPED_TRACE(aRadius);
+    const TopoDS_Shape aCylinder =
+      BRepPrimAPI_MakeCylinder(aRadius, 2.0 * aRadius).Shape();
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> anEdges;
+    TopExp::MapShapes(aCylinder, TopAbs_EDGE, anEdges);
+    BRepFilletAPI_MakeFillet aFillet(aCylinder);
+    int aNbSelected = 0;
+    for (const TopoDS_Shape& anEdgeShape : anEdges)
+    {
+      const TopoDS_Edge& anEdge = TopoDS::Edge(anEdgeShape);
+      if (BRepAdaptor_Curve(anEdge).GetType() == GeomAbs_Circle)
+      {
+        aFillet.Add(aRadius, anEdge);
+        ++aNbSelected;
+      }
+    }
+    ASSERT_EQ(aNbSelected, 2);
+    aFillet.Build();
+    ASSERT_TRUE(aFillet.IsDone());
+    const TopoDS_Shape& aResult = aFillet.Shape();
+    EXPECT_TRUE(BRepCheck_Analyzer(aResult, true, false, true).IsValid());
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aSolids;
+    TopExp::MapShapes(aResult, TopAbs_SOLID, aSolids);
+    EXPECT_EQ(aSolids.Extent(), 1);
+    GProp_GProps aVolume, anArea;
+    BRepGProp::VolumeProperties(aResult, aVolume);
+    BRepGProp::SurfaceProperties(aResult, anArea);
+    const double anExpectedVolume = 4.0 * std::acos(-1.0) * std::pow(aRadius, 3) / 3.0;
+    const double anExpectedArea = 4.0 * std::acos(-1.0) * aRadius * aRadius;
+    EXPECT_NEAR(aVolume.Mass(), anExpectedVolume, anExpectedVolume * 1.e-8);
+    EXPECT_NEAR(anArea.Mass(), anExpectedArea, anExpectedArea * 1.e-8);
+  }
+}
+
+TEST(BRepFilletAPI_MakeFilletTest, ConsumedCylinderPreservesUntouchedCompoundSolid)
+{
+  const TopoDS_Shape aCylinder = BRepPrimAPI_MakeCylinder(30.0, 60.0).Shape();
+  const TopoDS_Shape aBox = BRepPrimAPI_MakeBox(gp_Pnt(120, 0, 0), 30, 30, 30).Shape();
+  BRep_Builder aBuilder;
+  TopoDS_Compound aCompound;
+  aBuilder.MakeCompound(aCompound);
+  aBuilder.Add(aCompound, aCylinder);
+  aBuilder.Add(aCompound, aBox);
+  NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> anEdges;
+  TopExp::MapShapes(aCylinder, TopAbs_EDGE, anEdges);
+  BRepFilletAPI_MakeFillet aFillet(aCompound);
+  for (const TopoDS_Shape& anEdgeShape : anEdges)
+  {
+    const TopoDS_Edge& anEdge = TopoDS::Edge(anEdgeShape);
+    if (BRepAdaptor_Curve(anEdge).GetType() == GeomAbs_Circle)
+    {
+      aFillet.Add(30.0, anEdge);
+    }
+  }
+  aFillet.Build();
+  ASSERT_TRUE(aFillet.IsDone());
+  const TopoDS_Shape& aResult = aFillet.Shape();
+  EXPECT_TRUE(BRepCheck_Analyzer(aResult, true, false, true).IsValid());
+  NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aSolids;
+  TopExp::MapShapes(aResult, TopAbs_SOLID, aSolids);
+  EXPECT_EQ(aSolids.Extent(), 2);
+  EXPECT_TRUE(aSolids.Contains(aBox));
+  EXPECT_FALSE(aSolids.Contains(aCylinder));
+  GProp_GProps aVolume;
+  BRepGProp::VolumeProperties(aResult, aVolume);
+  EXPECT_NEAR(aVolume.Mass(), 36000.0 * std::acos(-1.0) + 27000.0, 1.e-5);
 }
